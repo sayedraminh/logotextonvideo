@@ -3,10 +3,11 @@ import uuid
 import subprocess
 import shutil
 import logging
+import asyncio
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -29,6 +30,23 @@ app.add_middleware(
 
 TEMP_DIR = Path("temp_files")
 TEMP_DIR.mkdir(exist_ok=True)
+
+# Cleanup delay in seconds (1 minute)
+CLEANUP_DELAY = 60
+
+
+def schedule_cleanup(request_dir: Path):
+    """Schedule cleanup of a request directory after CLEANUP_DELAY seconds."""
+    async def delayed_cleanup():
+        await asyncio.sleep(CLEANUP_DELAY)
+        try:
+            if request_dir.exists():
+                shutil.rmtree(request_dir)
+                logger.info(f"Cleaned up temp directory: {request_dir}")
+        except Exception as e:
+            logger.error(f"Failed to clean up {request_dir}: {e}")
+    
+    asyncio.create_task(delayed_cleanup())
 
 
 @app.post("/overlay")
@@ -153,6 +171,10 @@ async def overlay_video(
         logger.info(f"Output video created: {output_path} ({output_size} bytes)")
         logger.info("=" * 60)
 
+        # Schedule cleanup after 1 minute
+        schedule_cleanup(request_dir)
+        logger.info(f"Scheduled cleanup for {request_dir} in {CLEANUP_DELAY} seconds")
+
         return FileResponse(
             path=str(output_path),
             media_type="video/mp4",
@@ -161,12 +183,18 @@ async def overlay_video(
         )
 
     except HTTPException:
+        # Clean up immediately on error
+        if request_dir.exists():
+            shutil.rmtree(request_dir)
+            logger.info(f"Cleaned up {request_dir} after error")
         raise
     except Exception as e:
         logger.exception(f"Unexpected error: {e}")
+        # Clean up immediately on error
+        if request_dir.exists():
+            shutil.rmtree(request_dir)
+            logger.info(f"Cleaned up {request_dir} after error")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        pass
 
 
 @app.on_event("shutdown")
