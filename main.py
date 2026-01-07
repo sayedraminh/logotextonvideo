@@ -148,19 +148,25 @@ async def overlay_video(
 
         logger.info(f"FFmpeg command: {' '.join(cmd)}")
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Use async subprocess to not block event loop (allows concurrent processing)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
         
-        logger.info(f"FFmpeg return code: {result.returncode}")
-        if result.stdout:
-            logger.debug(f"FFmpeg stdout: {result.stdout}")
-        if result.stderr:
-            logger.info(f"FFmpeg stderr: {result.stderr}")
+        logger.info(f"FFmpeg return code: {process.returncode}")
+        if stdout:
+            logger.debug(f"FFmpeg stdout: {stdout.decode()}")
+        if stderr:
+            logger.info(f"FFmpeg stderr: {stderr.decode()}")
         
-        if result.returncode != 0:
-            logger.error(f"FFmpeg failed with code {result.returncode}")
+        if process.returncode != 0:
+            logger.error(f"FFmpeg failed with code {process.returncode}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"FFmpeg error: {result.stderr}"
+                detail=f"FFmpeg error: {stderr.decode()}"
             )
 
         if not output_path.exists():
